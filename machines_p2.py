@@ -1,92 +1,144 @@
 import numpy as np
-import random
 from itertools import product
-import time
-import copy
 
-class P2():
+class P2:
     def __init__(self, board, available_pieces):
         self.pieces = [(i, j, k, l) for i in range(2) for j in range(2) for k in range(2) for l in range(2)]
-        self.board = board  # 0: empty / 1~16: piece
+        self.board = board
         self.available_pieces = available_pieces
+        self.depth = 3
+        self.available_positions = self.get_available_locations()
+
+    def set_dynamic_depth(self):
+        empty_spaces = len(self.available_positions)
+        if empty_spaces > 12:
+            self.depth = 5
+        elif 8 <= empty_spaces <= 12:
+            self.depth = 10
+        else:
+            self.depth = 20
 
     def select_piece(self):
-        # 최선의 조각을 찾기 위해 Minimax 알고리즘을 사용
-        best_piece = None
-        best_score = float('inf')  # 상대방의 최적 점수를 최소화
-
-        for piece in self.available_pieces:
-            simulated_score = self.minimax(self.board, piece, depth=3, maximizing_player=False)
-            if simulated_score < best_score:
-                best_score = simulated_score
-                best_piece = piece
-
-        return best_piece
+        self.set_dynamic_depth()
+        _, piece = self.minimax_select_piece(self.depth, is_maximizing=False, alpha=-1e9, beta=1e9)
+        # 선택된 피스가 없을 경우 예외 처리
+        if piece is None:
+            piece = self.available_pieces[0]  # 유효한 기본값 반환
+        return piece
 
     def place_piece(self, selected_piece):
-        # 최선의 위치를 찾기 위해 Minimax 알고리즘을 사용
-        best_move = None
-        best_score = float('-inf')
+        self.set_dynamic_depth()
+        _, position = self.minimax_place_piece(selected_piece, self.depth, is_maximizing=True, alpha=-1e9, beta=1e9)
+        # 선택된 위치가 없을 경우 예외 처리
+        if position is None:
+            position = self.available_positions[0]  # 유효한 기본값 반환
+        return position
 
-        available_locs = [(row, col) for row, col in product(range(4), range(4)) if self.board[row][col] == 0]
-        for row, col in available_locs:
-            # 보드를 복사하여 가상의 움직임을 만듭니다.
-            temp_board = copy.deepcopy(self.board)
-            temp_board[row][col] = self.pieces.index(selected_piece) + 1  # 조각을 위치에 배치
+    def minimax_select_piece(self, depth, is_maximizing, alpha, beta):
+        if depth == 0 or self.is_terminal():
+            return self.evaluate(), None
 
-            simulated_score = self.minimax(temp_board, selected_piece, depth=3, maximizing_player=True)
-            if simulated_score > best_score:
-                best_score = simulated_score
-                best_move = (row, col)
+        best_piece = None
+        if is_maximizing:
+            max_eval = -1e9
+            for piece in self.available_pieces:
+                self.available_pieces.remove(piece)
+                eval_score, _ = self.minimax_place_piece(piece, depth - 1, False, alpha, beta)
+                self.available_pieces.append(piece)
 
-        return best_move
-
-    def minimax(self, board, piece, depth, maximizing_player):
-        # 종료 조건
-        if self.check_win(board):
-            return 10 if maximizing_player else -10
-        elif depth == 0 or self.is_board_full(board):
-            return 0  # 무승부
-
-        # 재귀적으로 모든 가능한 선택을 탐색
-        if maximizing_player:
-            max_eval = float('-inf')
-            available_locs = [(row, col) for row, col in product(range(4), range(4)) if board[row][col] == 0]
-            for row, col in available_locs:
-                temp_board = copy.deepcopy(board)
-                temp_board[row][col] = self.pieces.index(piece) + 1
-                eval = self.minimax(temp_board, piece, depth - 1, False)
-                max_eval = max(max_eval, eval)
-            return max_eval
+                if eval_score > max_eval:
+                    max_eval, best_piece = eval_score, piece
+                alpha = max(alpha, eval_score)
+                if beta <= alpha:
+                    break
+            return max_eval, best_piece
         else:
-            min_eval = float('inf')
-            for new_piece in self.available_pieces:
-                eval = self.minimax(board, new_piece, depth - 1, True)
-                min_eval = min(min_eval, eval)
-            return min_eval
+            min_eval = 1e9
+            for piece in self.available_pieces:
+                self.available_pieces.remove(piece)
+                eval_score, _ = self.minimax_place_piece(piece, depth - 1, True, alpha, beta)
+                self.available_pieces.append(piece)
 
-    def check_win(self, board):
-        # 보드의 승리 조건을 검사하는 함수 (기존에 사용한 check_win 함수와 동일)
+                if eval_score < min_eval:
+                    min_eval, best_piece = eval_score, piece
+                beta = min(beta, eval_score)
+                if beta <= alpha:
+                    break
+            return min_eval, best_piece
+
+    def minimax_place_piece(self, piece, depth, is_maximizing, alpha, beta):
+        if depth == 0 or self.is_terminal():
+            return self.evaluate(), None
+
+        best_position = None
+        if is_maximizing:
+            max_eval = -1e9
+            for row, col in self.available_positions:
+                self.board[row][col] = self.pieces.index(piece) + 1
+                eval_score, _ = self.minimax_select_piece(depth - 1, False, alpha, beta)
+                self.board[row][col] = 0
+
+                if eval_score > max_eval:
+                    max_eval, best_position = eval_score, (row, col)
+                alpha = max(alpha, eval_score)
+                if beta <= alpha:
+                    break
+            return max_eval, best_position
+        else:
+            min_eval = 1e9
+            for row, col in self.available_positions:
+                self.board[row][col] = self.pieces.index(piece) + 1
+                eval_score, _ = self.minimax_select_piece(depth - 1, True, alpha, beta)
+                self.board[row][col] = 0
+
+                if eval_score < min_eval:
+                    min_eval, best_position = eval_score, (row, col)
+                beta = min(beta, eval_score)
+                if beta <= alpha:
+                    break
+            return min_eval, best_position
+
+    def check_win(self):
         for col in range(4):
-            if self.check_line([board[row][col] for row in range(4)]):
+            if self.check_line([self.board[row][col] for row in range(4)]):
                 return True
         for row in range(4):
-            if self.check_line([board[row][col] for col in range(4)]):
+            if self.check_line([self.board[row][col] for col in range(4)]):
                 return True
-        if self.check_line([board[i][i] for i in range(4)]) or self.check_line([board[i][3 - i] for i in range(4)]):
+        if self.check_line([self.board[i][i] for i in range(4)]) or self.check_line([self.board[i][3 - i] for i in range(4)]):
             return True
+        return self.check_2x2_subgrid_win()
+
+    def check_2x2_subgrid_win(self):
+        for row in range(3):
+            for col in range(3):
+                subgrid = [self.board[row + i][col + j] for i in range(2) for j in range(2)]
+                if 0 not in subgrid and self.check_line(subgrid):
+                    return True
         return False
 
     def check_line(self, line):
-        # 라인이 동일한 특성을 가진 조각들로 구성되었는지 확인
         if 0 in line:
-            return False  # 불완전한 라인
+            return False
         characteristics = np.array([self.pieces[piece_idx - 1] for piece_idx in line])
         for i in range(4):
             if len(set(characteristics[:, i])) == 1:
                 return True
         return False
 
-    def is_board_full(self, board):
-        # 보드가 가득 찼는지 확인
-        return all(board[row][col] != 0 for row in range(4) for col in range(4))
+    def is_board_full(self):
+        return all(self.board[row][col] != 0 for row in range(4) for col in range(4))
+
+    def is_terminal(self):
+        return self.is_board_full() or self.check_win()
+
+    def evaluate(self):
+        if self.check_win():
+            return 100 if self.is_winner() else -100
+        return 0
+
+    def get_available_locations(self):
+        return [(row, col) for row, col in product(range(4), range(4)) if self.board[row][col] == 0]
+
+    def is_winner(self):
+        return self.check_win()

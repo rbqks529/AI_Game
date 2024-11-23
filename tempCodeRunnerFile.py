@@ -12,11 +12,11 @@ class P2:
     def set_dynamic_depth(self):
         empty_spaces = len(self.available_positions)
         if empty_spaces > 12:
-            self.depth = 5
+            self.depth = 2
         elif 8 <= empty_spaces <= 12:
-            self.depth = 10
+            self.depth = 2
         else:
-            self.depth = 20
+            self.depth = 2
 
     def select_piece(self):
         self.set_dynamic_depth()

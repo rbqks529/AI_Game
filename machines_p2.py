@@ -81,7 +81,7 @@ class MCTSNode:
 class P2:
     def __init__(self, board, available_pieces):
         self.state = QuartoState(board, available_pieces)
-        self.simulation_time = 15.0  # 시간 제한을 1초로 조정
+        self.simulation_time = 10.0  # 시간 제한을 1초로 조정
         self.pieces = [(i, j, k, l) for i in range(2) for j in range(2) 
                         for k in range(2) for l in range(2)]
     
@@ -155,7 +155,7 @@ class P2:
         state = node.state.clone()
         current_player = 1  # 1: self, 0: opponent
         depth = 0
-        max_depth = 24  # 최대 시뮬레이션 깊이
+        max_depth = 40  # 최대 시뮬레이션 깊이
         
         while not self._is_game_over(state) and depth < max_depth:
             if state.selected_piece is None:
@@ -246,55 +246,33 @@ class P2:
         return state.check_win() or not state.get_available_positions()
 
     def _evaluate_piece_selection(self, piece, state):
-        """Evaluate how disadvantageous a piece is for the opponent"""
+        """말 선택 시 상대방에게 얼마나 불리한지를 더 정교하게 평가"""
         score = 0
-        available_positions = state.get_available_positions()
-        
-        # 현재 보드의 상태를 고려한 가중치 추가
-        board_state_weight = self._evaluate_board_state(state)
-        
-        for pos in available_positions:
-            r, c = pos
+        for pos in state.get_available_positions():
             temp_state = state.clone()
-            temp_state.board[r][c] = self.pieces.index(piece) + 1
-            
-            # 승리 가능성 계산
-            winning_potential = self._count_potential_winning_lines(temp_state, r, c)
-            
-            # 상대방의 즉시 승리 가능성 체크 (매우 높은 페널티)
-            if self._can_opponent_win_next_turn(temp_state, pos):
-                score -= 1000
-                
-            # 중앙 위치에 대한 가중치
-            position_weight = 1.5 if (r in [1,2] and c in [1,2]) else 1.0
-            
-            score += winning_potential * position_weight
-        
-        return -(score * board_state_weight)
+            temp_state.board[pos[0]][pos[1]] = self.pieces.index(piece) + 1
+            if temp_state.check_win():
+                score -= 1000  # 즉시 승리 가능성이 있는 말은 매우 불리
+            score += self._count_potential_winning_lines(temp_state, pos[0], pos[1])
+        return -score  # 최악의 점수를 찾기 위해 부호 반전
 
     def _evaluate_board_state(self, state):
         """Evaluate current board state to adjust piece selection strategy"""
         filled_squares = sum(1 for row in state.board for cell in row if cell != 0)
         if filled_squares < 6:  # 게임 초반
-            return 0.6  # 공격적 선택
+            return 1.2  # 공격적 선택
         elif filled_squares < 12:  # 게임 중반
-            return 0.6  # 균형잡힌 선택
+            return 1.0  # 균형잡힌 선택
         else:  # 게임 후반
-            return 0.6  # 보수적 선택
+            return 0.8  # 보수적 선택
 
     def _can_opponent_win_next_turn(self, state, last_pos):
-        """Check if opponent can win in their next move"""
-        r, c = last_pos
-        # 주변 위치들을 확인하여 승리 가능성 체크
-        for nr, nc in [(r-1,c), (r+1,c), (r,c-1), (r,c+1)]:
-            if 0 <= nr < 4 and 0 <= nc < 4 and state.board[nr][nc] == 0:
-                # 임시로 피스를 놓아보고 승리 조건 확인
-                temp_state = state.clone()
-                # 가장 위험한 피스를 놓아본다고 가정
-                for test_piece in state.available_pieces:
-                    temp_state.board[nr][nc] = self.pieces.index(test_piece) + 1
-                    if temp_state.check_win():
-                        return True
+        """상대방이 다음 턴에 승리 가능한 모든 조합을 시뮬레이션"""
+        for pos in state.get_available_positions():
+            temp_state = state.clone()
+            temp_state.board[pos[0]][pos[1]] = self.pieces.index(state.selected_piece) + 1
+            if temp_state.check_win():
+                return True  # 상대방이 이길 가능성이 있음
         return False
 
     def _count_potential_winning_lines(self, state, row, col):

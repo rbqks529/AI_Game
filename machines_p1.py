@@ -1,115 +1,239 @@
-import sys
-import pygame
 import numpy as np
-import random
+import random, time
 from itertools import product
-import time
+from functools import lru_cache
 
-class P1:
+WIN_SCORE = 1
+DRAW_SCORE = 0
+minimax_place: callable
+selected_piece: callable
+
+pieces = [(i, j, k, l) for i in range(2) for j in range(2) for k in range(2) for l in range(2)]
+offsets = [(0,0), (0,1), (1,0), (1,1)]
+
+@lru_cache(maxsize=8192)
+def evaluate_place(board_tuple, selected_piece):
+    board = np.array(board_tuple)
+    available_locs = [(row, col) for row, col in product(range(4), range(4)) if board[row][col]==0]
+    for row, col in available_locs:
+        new_board = np.copy(board)
+        new_board[row][col] = pieces.index(selected_piece) + 1
+        if(check_win(new_board)):
+            return WIN_SCORE * 0.9
+    if len(available_locs) == 1:
+        return WIN_SCORE * 0.1
+    else:
+        return WIN_SCORE * 0.3
+
+@lru_cache(maxsize=8192)
+def evaluate_select(board_tuple, available_pieces_tuple):
+    board = np.array(board_tuple)
+    available_pieces = list(available_pieces_tuple)
+    available_locs = [(row, col) for row, col in product(range(4), range(4)) if board[row][col]==0]
+    
+    for piece in available_pieces:
+        safe_piece = True
+        for row, col in available_locs:
+            new_board = np.copy(board)
+            new_board[row][col] = pieces.index(piece) + 1
+            if(check_win(new_board)):
+                safe_piece = False
+                break
+        if safe_piece:
+            if (len(available_pieces) == 1):
+                return WIN_SCORE * 0.2
+            else:
+                return 0.5 * WIN_SCORE
+    return -WIN_SCORE * 0.8
+
+BOARD_ROWS = 4
+BOARD_COLS = 4
+
+def check_line(line):
+    if 0 in line:
+        return False
+    characteristics = np.array([pieces[piece_idx - 1] for piece_idx in line])
+    for i in range(4):
+        if len(set(characteristics[:, i])) == 1:
+            return True
+    return False
+
+def check_2x2_subgrid_win(board):
+    for r in range(BOARD_ROWS - 1):
+        for c in range(BOARD_COLS - 1):
+            subgrid = [board[r][c], board[r][c+1], board[r+1][c], board[r+1][c+1]]
+            if 0 not in subgrid:
+                characteristics = [pieces[idx - 1] for idx in subgrid]
+                for i in range(4):
+                    if len(set(char[i] for char in characteristics)) == 1:
+                        return True
+    return False
+
+def check_win(board):
+    for col in range(BOARD_COLS):
+        if check_line([board[row][col] for row in range(BOARD_ROWS)]):
+            return True
+    for row in range(BOARD_ROWS):
+        if check_line([board[row][col] for col in range(BOARD_COLS)]):
+            return True
+    if check_line([board[i][i] for i in range(BOARD_ROWS)]) or check_line([board[i][BOARD_ROWS - i - 1] for i in range(BOARD_ROWS)]):
+        return True
+    if check_2x2_subgrid_win(board):
+        return True
+    return False
+
+def is_board_full(board):
+    for row in range(BOARD_ROWS):
+        for col in range(BOARD_COLS):
+            if board[row][col] == 0:
+                return False
+    return True
+
+def piece_to_mbti(piece):
+    result = ""
+    result += "E" if piece[0] == 1 else "I"
+    result += "N" if piece[1] == 0 else "S"
+    result += "F" if piece[2] == 1 else "T"
+    result += "P" if piece[3] == 0 else "J"
+    return result
+
+def get_depth(available_pieces):
+    if len(available_pieces) >= 11:
+        return 3
+    elif len(available_pieces) >= 9:
+        return 5
+    elif len(available_pieces) >= 8:
+        return 6
+    elif len(available_pieces) >= 6:
+        return 7
+    else:
+        return 8
+
+@lru_cache(maxsize=65536)
+def minimax_select(is_maximizing, depth, available_pieces_tuple, board_tuple):
+    board = np.array(board_tuple)
+    available_pieces = list(available_pieces_tuple)
+    
+    if check_win(board):
+        if is_maximizing:
+            return WIN_SCORE
+        if not is_maximizing:
+            return -WIN_SCORE
+            
+    if is_board_full(board):
+        return DRAW_SCORE
+        
+    if is_maximizing:
+        if depth == 0:
+            return evaluate_select(board_tuple, available_pieces_tuple)
+        best_score = -1e9
+        for piece in available_pieces:
+            new_available_pieces = list(available_pieces)
+            new_available_pieces.remove(piece)
+            new_available_pieces_tuple = tuple(new_available_pieces)
+            score = minimax_place(False, depth - 1, new_available_pieces_tuple, board_tuple, piece)
+            best_score = max(score, best_score)
+        return best_score
+    else:
+        if depth == 0:
+            return -evaluate_select(board_tuple, available_pieces_tuple)
+        best_score = 1e9
+        for piece in available_pieces:
+            new_available_pieces = list(available_pieces)
+            new_available_pieces.remove(piece)
+            new_available_pieces_tuple = tuple(new_available_pieces)
+            score = minimax_place(True, depth - 1, new_available_pieces_tuple, board_tuple, piece)
+            best_score = min(score, best_score)
+        return best_score
+
+@lru_cache(maxsize=65536)
+def minimax_place(is_maximizing, depth, available_pieces_tuple, board_tuple, selected_piece):
+    board = np.array(board_tuple)
+    available_pieces = list(available_pieces_tuple)
+    
+    if is_maximizing:
+        if depth == 0:
+            return evaluate_place(board_tuple, selected_piece)
+        best_score = -1e9
+        for row in range(4):
+            for col in range(4):
+                if board[row][col] == 0:
+                    new_board = np.copy(board)
+                    new_board[row][col] = pieces.index(selected_piece) + 1
+                    board_tuple = tuple(map(tuple, new_board))
+                    score = minimax_select(True, depth - 1, available_pieces_tuple, board_tuple)
+                    best_score = max(score, best_score)
+        return best_score
+    else:
+        if depth == 0:
+            return -evaluate_place(board_tuple, selected_piece)
+        best_score = 1e9
+        for row in range(4):
+            for col in range(4):
+                if board[row][col] == 0:
+                    new_board = np.copy(board)
+                    new_board[row][col] = pieces.index(selected_piece) + 1
+                    board_tuple = tuple(map(tuple, new_board))
+                    score = minimax_select(False, depth - 1, available_pieces_tuple, board_tuple)
+                    best_score = min(score, best_score)
+        return best_score
+
+class P1():
     def __init__(self, board, available_pieces):
         self.pieces = [(i, j, k, l) for i in range(2) for j in range(2) for k in range(2) for l in range(2)]
         self.board = board
         self.available_pieces = available_pieces
-        self.BOARD_SIZE = 4
-        self.best_moves = {}
-        self.minimax_calculated = False
-
+        
     def select_piece(self):
-        if len(self.available_pieces) > 10:
-            return random.choice(self.available_pieces)
-        elif not self.minimax_calculated:
-            self.calculate_minimax()
+        start = time.time()
+        print(f"=== 남은 말 {len(self.available_pieces)}개, 미니맥스 1 말 선택 중.. {time.strftime('%H:%M:%S')} ===")
         
-        current_state = self.get_board_state()
-        return max(self.available_pieces, key=lambda p: self.minimax(self.board, [p], False, float('-inf'), float('inf')))
-
-    def place_piece(self, selected_piece):
-        if len(self.available_pieces) > 10:
-            available_locs = [(row, col) for row, col in product(range(4), range(4)) if self.board[row][col] == 0]
-            return random.choice(available_locs)
-        elif not self.minimax_calculated:
-            self.calculate_minimax()
+        if len(self.available_pieces) == 16:
+            random.seed(time.time() + len(self.available_pieces))
+            result = random.choice(self.available_pieces)
+            print(f"=== 미니맥스 1 {piece_to_mbti(result)} 선택, {int(time.time() - start)} 초 경과 ===")
+            return result
+            
+        depth = get_depth(self.available_pieces)
+        best_score = -1e9
         
-        current_state = self.get_board_state()
-        return self.best_moves[current_state]['move']
-
-    def calculate_minimax(self):
-        self.best_moves = {}
-        self.minimax(self.board, self.available_pieces, True, float('-inf'), float('inf'))
-        self.minimax_calculated = True
-
-    def minimax(self, board, available_pieces, is_maximizing, alpha, beta):
-        state = self.get_board_state(board)
-        if state in self.best_moves:
-            return self.best_moves[state]['score']
-
-        if self.check_win(board):
-            return -1 if is_maximizing else 1
-
-        if not available_pieces:
-            return 0
-
-        best_score = float('-inf') if is_maximizing else float('inf')
-        best_piece = None
-        best_move = None
-
-        for piece in available_pieces:
-            for row, col in product(range(self.BOARD_SIZE), range(self.BOARD_SIZE)):
-                if board[row][col] == 0:
-                    new_board = board.copy()
-                    new_board[row][col] = self.pieces.index(piece) + 1
-                    new_available_pieces = available_pieces[:]
-                    new_available_pieces.remove(piece)
-
-                    score = self.minimax(new_board, new_available_pieces, not is_maximizing, alpha, beta)
-
-                    if is_maximizing:
-                        if score > best_score:
-                            best_score = score
-                            best_piece = piece
-                            best_move = (row, col)
-                        alpha = max(alpha, best_score)
-                    else:
-                        if score < best_score:
-                            best_score = score
-                            best_piece = piece
-                            best_move = (row, col)
-                        beta = min(beta, best_score)
-
-                    if beta <= alpha:
-                        break
+        for piece in self.available_pieces:
+            new_available_pieces = list(self.available_pieces)
+            new_available_pieces.remove(piece)
+            new_available_pieces_tuple = tuple(new_available_pieces)
+            board_tuple = tuple(map(tuple, self.board))
+            score = minimax_place(False, depth, new_available_pieces_tuple, board_tuple, piece)
+            if score > best_score:
+                best_score = score
+                select = piece
                 
-            if beta <= alpha:
-                break
-
-        self.best_moves[state] = {'score': best_score, 'piece': best_piece, 'move': best_move}
-        return best_score
-
-    def get_board_state(self, board=None):
-        if board is None:
-            board = self.board
-        return tuple(map(tuple, board))
-
-    def check_win(self, board):
-        for i in range(self.BOARD_SIZE):
-            if self.check_line([board[i][j] for j in range(self.BOARD_SIZE)]) or self.check_line([board[j][i] for j in range(self.BOARD_SIZE)]):
-                return True
-        if self.check_line([board[i][i] for i in range(self.BOARD_SIZE)]) or self.check_line([board[i][self.BOARD_SIZE-1-i] for i in range(self.BOARD_SIZE)]):
-            return True
-        return self.check_2x2_subgrid_win(board)
-
-    def check_line(self, line):
-        if 0 in line:
-            return False
-        characteristics = np.array([self.pieces[piece_idx - 1] for piece_idx in line])
-        return any(len(set(characteristics[:, i])) == 1 for i in range(4))
-
-    def check_2x2_subgrid_win(self, board):
-        for r in range(self.BOARD_SIZE - 1):
-            for c in range(self.BOARD_SIZE - 1):
-                subgrid = [board[r][c], board[r][c+1], board[r+1][c], board[r+1][c+1]]
-                if 0 not in subgrid:
-                    characteristics = [self.pieces[idx - 1] for idx in subgrid]
-                    if any(len(set(char[i] for char in characteristics)) == 1 for i in range(4)):
-                        return True
-        return False
+        print(f"=== 미니맥스 1 {piece_to_mbti(select)} 선택, {int(time.time() - start)} 초 경과 ===")
+        return select
+        
+    def place_piece(self, selected_piece):
+        available_locs = [(row, col) for row, col in product(range(4), range(4)) if self.board[row][col]==0]
+        
+        start = time.time()
+        print(f"=== 남은 말 {len(self.available_pieces)}개, 미니맥스 1 말 놓는 중.. {time.strftime('%H:%M:%S')} ===")
+        
+        if len(available_locs) == 16:
+            random.seed(time.time_ns())
+            result = random.choice(available_locs)
+            print(f"=== 미니맥스 1 {result[0]}, {result[1]} 배치, {int(time.time() - start)} 초 경과 ===")
+            return result
+            
+        depth = get_depth(self.available_pieces)
+        best_score = -1e9
+        
+        for row, col in available_locs:
+            new_board = np.copy(self.board)
+            new_board[row][col] = self.pieces.index(selected_piece) + 1
+            available_pieces_tuple = tuple(self.available_pieces)
+            board_tuple = tuple(map(tuple, new_board))
+            score = minimax_select(True, depth, available_pieces_tuple, board_tuple)
+            if score > best_score:
+                best_score = score
+                place = (row, col)
+                
+        print(f"=== 미니맥스 1 {place[0]}, {place[1]} 배치, {int(time.time() - start)} 초 경과 ===")
+        return place

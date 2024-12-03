@@ -94,7 +94,7 @@ class P2:
             return 3
         elif remaining_piece > 10:  # 중반
             #time_weight = 1.0
-            return 15
+            return 10
         elif remaining_piece > 8:  # 중반
             #time_weight = 1.0
             return 30
@@ -232,43 +232,8 @@ class P2:
         best_child = max(root.children, key=lambda c: c.visits)
         best_position = best_child.action[1]
 
-        # MCTS 결과 검증
-        if self._is_safe_move(best_position, selected_piece):
-            print(f"[DEBUG] Safe position determined by MCTS: {best_position}")
-            return best_position
-        else:
-            if(len(self.state.available_pieces) < 8):
-                print(f"[DEBUG] MCTS-selected position is unsafe: {best_position}")
-                # 안전한 위치를 다시 탐색
-                for position in self.state.get_available_positions():
-                    if self._is_safe_move(position, selected_piece):
-                        print(f"[DEBUG] Alternative safe position: {position}")
-                        return position
-
-        # 안전한 위치를 찾을 수 없으면 MCTS 결과를 반환
-        print(f"[DEBUG] No safe position found, returning MCTS result: {best_position}")
+        print(f"[DEBUG] Best position determined by MCTS: {best_position}")
         return best_position
-
-    
-    def _is_safe_move(self, position, piece):
-        """
-        해당 위치에 말을 두었을 때 상대방의 승리 가능성을 평가.
-        """
-        # Use self.state.board instead of self.quarto.get_board()
-        simulated_board = self.state.board.copy()  # Deepcopy of the board
-        r, c = position
-        simulated_board[r][c] = self.pieces.index(piece) + 1  # Place the piece on the simulated board
-
-        # Simulate the opponent's possible moves
-        for opp_position in self.state.get_available_positions():
-            for opp_piece in self.state.available_pieces:
-                temp_board = simulated_board.copy()
-                opp_r, opp_c = opp_position
-                temp_board[opp_r][opp_c] = self.pieces.index(opp_piece) + 1  # Place opponent's piece
-                temp_state = QuartoState(temp_board, self.state.available_pieces, opp_piece)
-                if temp_state.check_win():  # Check if the opponent wins after placing their piece
-                    return False
-        return True
     
     
     def _select(self, node):
@@ -297,7 +262,7 @@ class P2:
     def _simulate(self, node):
         state = node.state.clone()
         current_player = 1  # 1: self, 0: opponent
-        max_depth = 25  # 최대 시뮬레이션 깊이
+        max_depth = 20  # 최대 시뮬레이션 깊이
         depth = 0
 
         while not self._is_game_over(state) and depth < max_depth:
@@ -349,9 +314,6 @@ class P2:
 
 
     def _smart_position_selection(self, state, positions, current_player):
-        """
-        주어진 위치들 중에서 최적의 위치를 선택.
-        """
         best_pos = None
         best_score = float('-inf') if current_player == 1 else float('inf')
 
@@ -364,9 +326,8 @@ class P2:
             if temp_state.check_win():
                 return pos  # 즉각 승리 가능 위치 선택
 
-            # 잠재적 승리 라인 수 계산
-            potential_lines = self._count_potential_winning_lines(temp_state, r, c)
-            score = 10 * potential_lines  # 잠재적 승리 조건에 점수 부여
+            # 위치 점수 계산
+            score = self._count_potential_winning_lines(temp_state, r, c)
 
             # 중앙 위치 가중치 추가
             if r in [1, 2] and c in [1, 2]:
@@ -413,18 +374,15 @@ class P2:
 
     
     def _backpropagate(self, node, result):
-        depth = 0
+        depth = 0  # 현재 노드의 깊이를 추적
         while node:
             node.visits += 1
-            weight = 1 / (1 + depth)  # 깊이에 따른 감소 가중치
+            # 깊이에 따른 가중치 감소
+            weight = 1 / (1 + depth)
             node.wins += result * weight
-            # 만약 상대방의 승리 가능성을 방해한 경우 추가 보너스
-            if result == 1 and depth % 2 == 1:  # 상대방이 불리한 상황
-                node.wins += 0.1  # 약간의 추가 보너스
             node = node.parent
             result = 1 - result  # 승패 반전
             depth += 1
-
 
     
     def _is_game_over(self, state):
@@ -452,6 +410,7 @@ class P2:
                 score -= 500  # 특정 특성을 충족시키는 말에 높은 패널티
         
         return -score
+
 
 
     def _can_opponent_win_next_turn(self, state, piece):

@@ -316,6 +316,7 @@ class P1:
         
 
         if len(self.state.available_pieces) <= 12:
+            select = None
             depth = get_depth(self.state.available_pieces)
             best_score = -1e9
 
@@ -342,7 +343,10 @@ class P1:
                     if score > best_score:
                         best_score = score
                         select = piece
-                        
+
+            # 선택된 말이 없으면 기본값 설정 (예: 첫 번째 말 선택)
+            if select is None:
+                select = safe_pieces[0] if safe_pieces else self.state.available_pieces[0]             
 
             print(f"=== 미니맥스 1 {piece_to_mbti(select)} 선택, {int(time.time() - start_time)} 초 경과 ===")
             return select
@@ -470,11 +474,7 @@ class P1:
                 score = minimax_select(True, depth, available_pieces_tuple, board_tuple)
                 if score > best_score:
                     best_score = score
-                    best_location = (row, col)
-
-            # 선택된 말이 없으면 기본값 설정 (예: 첫 번째 말 선택)
-            if select is None:
-                select = safe_pieces[0] if safe_pieces else self.state.available_pieces[0]        
+                    best_location = (row, col)       
 
             print(f"=== 미니맥스 {best_location[0]}, {best_location[1]} 배치, {int(time.time() - start)} 초 경과 ===")
             return best_location

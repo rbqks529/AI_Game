@@ -1,8 +1,186 @@
 import numpy as np
 from itertools import product
 import time
-import random
+import copy
 from copy import deepcopy
+from functools import lru_cache
+
+BOARD_ROWS = 4
+BOARD_COLS = 4
+WIN_SCORE = 1
+DRAW_SCORE = 0
+minimax_place: callable
+selected_piece: callable
+pieces = [(i, j, k, l) for i in range(2) for j in range(2) for k in range(2) for l in range(2)]
+offsets = [(0,0), (0,1), (1,0), (1,1)]
+
+
+def check_line(line):
+        if 0 in line:
+            return False
+        characteristics = np.array([pieces[piece_idx - 1] for piece_idx in line])
+        for i in range(4):
+            if len(set(characteristics[:, i])) == 1:
+                return True
+        return False
+
+def check_2x2_subgrid_win(board):
+        for r in range(BOARD_ROWS - 1):
+            for c in range(BOARD_COLS - 1):
+                subgrid = [board[r][c], board[r][c+1], board[r+1][c], board[r+1][c+1]]
+                if 0 not in subgrid:
+                    characteristics = [pieces[idx - 1] for idx in subgrid]
+                    for i in range(4):
+                        if len(set(char[i] for char in characteristics)) == 1:
+                            return True
+        return False
+
+def check_win(board):
+        for col in range(BOARD_COLS):
+            if check_line([board[row][col] for row in range(BOARD_ROWS)]):
+                return True
+        for row in range(BOARD_ROWS):
+            if check_line([board[row][col] for col in range(BOARD_COLS)]):
+                return True
+        if check_line([board[i][i] for i in range(BOARD_ROWS)]) or check_line([board[i][BOARD_ROWS - i - 1] for i in range(BOARD_ROWS)]):
+            return True
+        if check_2x2_subgrid_win(board):
+            return True
+        return False
+
+def is_board_full(board):
+        for row in range(BOARD_ROWS):
+            for col in range(BOARD_COLS):
+                if board[row][col] == 0:
+                    return False
+        return True
+
+def piece_to_mbti(piece):
+        result = ""
+        result += "E" if piece[0] == 1 else "I"
+        result += "N" if piece[1] == 0 else "S"
+        result += "F" if piece[2] == 1 else "T"
+        result += "P" if piece[3] == 0 else "J"
+        return result
+
+
+def get_depth(available_pieces):
+    if len(available_pieces) >= 11:
+        return 4
+    elif len(available_pieces) >= 10:
+        return 5
+    elif len(available_pieces) >= 9:
+        return 6
+    elif len(available_pieces) >= 8:
+        return 8
+    elif len(available_pieces) >= 6:
+        return 9
+    else:
+        return 10
+        
+@lru_cache(maxsize=8192)
+def evaluate_place(board_tuple, selected_piece):
+        board = np.array(board_tuple)
+        available_locs = [(row, col) for row, col in product(range(4), range(4)) if board[row][col]==0]
+        for row, col in available_locs:
+            new_board = np.copy(board)
+            new_board[row][col] = pieces.index(selected_piece) + 1
+            if(check_win(new_board)):
+                return WIN_SCORE * 0.98
+        if len(available_locs) == 1:
+            return WIN_SCORE * 0.15
+        else:
+            return WIN_SCORE * 0.45
+
+@lru_cache(maxsize=8192)
+def evaluate_select(board_tuple, available_pieces_tuple):
+        board = np.array(board_tuple)
+        available_pieces = list(available_pieces_tuple)
+        available_locs = [(row, col) for row, col in product(range(4), range(4)) if board[row][col]==0]
+        
+        for piece in available_pieces:
+            safe_piece = True
+            for row, col in available_locs:
+                new_board = np.copy(board)
+                new_board[row][col] = pieces.index(piece) + 1
+                if(check_win(new_board)):
+                    safe_piece = False
+                    break
+            if safe_piece:
+                if (len(available_pieces) == 1):
+                    return WIN_SCORE * 0.35
+                else:
+                    return WIN_SCORE * 0.65
+        return -WIN_SCORE * 0.95
+
+@lru_cache(maxsize=65536)
+def minimax_select(is_maximizing, depth, available_pieces_tuple, board_tuple):
+        board = np.array(board_tuple)
+        available_pieces = list(available_pieces_tuple)
+        
+        if check_win(board):
+            if is_maximizing:
+                return WIN_SCORE
+            if not is_maximizing:
+                return -WIN_SCORE
+                
+        if is_board_full(board):
+            return DRAW_SCORE
+            
+        if is_maximizing:
+            if depth == 0:
+                return evaluate_select(board_tuple, available_pieces_tuple)
+            best_score = -1e9
+            for piece in available_pieces:
+                new_available_pieces = list(available_pieces)
+                new_available_pieces.remove(piece)
+                new_available_pieces_tuple = tuple(new_available_pieces)
+                score = minimax_place(False, depth - 1, new_available_pieces_tuple, board_tuple, piece)
+                best_score = max(score, best_score)
+            return best_score
+        else:
+            if depth == 0:
+                return -evaluate_select(board_tuple, available_pieces_tuple)
+            best_score = 1e9
+            for piece in available_pieces:
+                new_available_pieces = list(available_pieces)
+                new_available_pieces.remove(piece)
+                new_available_pieces_tuple = tuple(new_available_pieces)
+                score = minimax_place(True, depth - 1, new_available_pieces_tuple, board_tuple, piece)
+                best_score = min(score, best_score)
+            return best_score
+
+@lru_cache(maxsize=65536)
+def minimax_place(is_maximizing, depth, available_pieces_tuple, board_tuple, selected_piece):
+        board = np.array(board_tuple)
+        available_pieces = list(available_pieces_tuple)
+        
+        if is_maximizing:
+            if depth == 0:
+                return evaluate_place(board_tuple, selected_piece)
+            best_score = -1e9
+            for row in range(4):
+                for col in range(4):
+                    if board[row][col] == 0:
+                        new_board = np.copy(board)
+                        new_board[row][col] = pieces.index(selected_piece) + 1
+                        board_tuple = tuple(map(tuple, new_board))
+                        score = minimax_select(True, depth - 1, available_pieces_tuple, board_tuple)
+                        best_score = max(score, best_score)
+            return best_score
+        else:
+            if depth == 0:
+                return -evaluate_place(board_tuple, selected_piece)
+            best_score = 1e9
+            for row in range(4):
+                for col in range(4):
+                    if board[row][col] == 0:
+                        new_board = np.copy(board)
+                        new_board[row][col] = pieces.index(selected_piece) + 1
+                        board_tuple = tuple(map(tuple, new_board))
+                        score = minimax_select(False, depth - 1, available_pieces_tuple, board_tuple)
+                        best_score = min(score, best_score)
+            return best_score
 
 class QuartoState:
     def __init__(self, board, available_pieces, selected_piece=None):
@@ -12,8 +190,10 @@ class QuartoState:
         self.pieces = [(i, j, k, l) for i in range(2) for j in range(2) 
                         for k in range(2) for l in range(2)]
         
+        
     def clone(self):
         return QuartoState(self.board, self.available_pieces, self.selected_piece)
+
     
     def get_available_positions(self):
         return [(r, c) for r, c in product(range(4), range(4)) 
@@ -53,13 +233,14 @@ class QuartoState:
         return False
 
 class MCTSNode:
-    def __init__(self, state, parent=None, action=None):
+    def __init__(self, state, parent=None, action=None, turn_owner='P1'):
         self.state = state
         self.parent = parent
         self.action = action
         self.children = []
         self.wins = 0
         self.visits = 0
+        self.turn_owner = turn_owner  # 현재 턴의 주인 (P1, P2)
         self.untried_actions = self._get_untried_actions()
         
     def _get_untried_actions(self):
@@ -78,9 +259,10 @@ class MCTSNode:
     def is_terminal(self):
         return self.state.check_win() or not self.state.get_available_positions()
 
-class P2:
+class P1:
     def __init__(self, board, available_pieces):
         self.state = QuartoState(board, available_pieces)
+        self.board = board
         self.pieces = [(i, j, k, l) for i in range(2) for j in range(2) 
                         for k in range(2) for l in range(2)]
 
@@ -89,21 +271,21 @@ class P2:
 
         print(f"[DEBUG] remaining_piece: {remaining_piece}")
         # 진행 상황에 따라 가중치를 조정
-        if remaining_piece > 12:  # 초반
+            #time_weight = 2.0
+        if remaining_piece > 14:  # 초반
             #time_weight = 0.5
-            return 3
-        elif remaining_piece > 10:  # 중반
+            return 15
+        elif remaining_piece > 12:  # 중반
             #time_weight = 1.0
-            return 10
+            return 35
         elif remaining_piece > 8:  # 중반
             #time_weight = 1.0
-            return 30
+            return 50
         elif remaining_piece > 6:  # 중반
             #time_weight = 1.0
             return 35
         else:  # 후반
-            return 40
-            #time_weight = 2.0
+            return 30
         
         # 남은 턴 수에 따라 동적 분배
         #dynamic_time = max((remaining_time / remaining_piece) * time_weight, 1.0)
@@ -131,10 +313,47 @@ class P2:
             self.state.available_pieces.remove(best_piece)
             self.state.selected_piece = best_piece
             return best_piece
+        
+
+        if len(self.state.available_pieces) <= 11:
+            select = None
+            depth = get_depth(self.state.available_pieces)
+            best_score = -1e9
+
+            if safe_pieces:
+                print(f"[미니맥스] Safe pieces: {safe_pieces}")
+                for piece in safe_pieces:
+                    new_available_pieces = list(safe_pieces)
+                    new_available_pieces.remove(piece)
+                    new_available_pieces_tuple = tuple(new_available_pieces)
+                    board_tuple = tuple(map(tuple, self.state.board))
+                    score = minimax_place(False, depth, new_available_pieces_tuple, board_tuple, piece)
+                    if score > best_score:
+                        best_score = score
+                        select = piece
+            
+            else:
+                print(f"[미니맥스] Safe pieces 없음 -> 질걸?")
+                for piece in self.state.available_pieces:
+                    new_available_pieces = list(self.state.available_pieces)
+                    new_available_pieces.remove(piece)
+                    new_available_pieces_tuple = tuple(new_available_pieces)
+                    board_tuple = tuple(map(tuple, self.state.board))
+                    score = minimax_place(False, depth, new_available_pieces_tuple, board_tuple, piece)
+                    if score > best_score:
+                        best_score = score
+                        select = piece
+
+            # 선택된 말이 없으면 기본값 설정 (예: 첫 번째 말 선택)
+            if select is None:
+                select = safe_pieces[0] if safe_pieces else self.state.available_pieces[0]             
+
+            print(f"=== 미니맥스 1 {piece_to_mbti(select)} 선택, {int(time.time() - start_time)} 초 경과 ===")
+            return select
 
         # MCTS 탐색 시작
         if safe_pieces:  # 안전한 말이 있는 경우
-            print(f"[DEBUG] Safe pieces: {safe_pieces}")
+            print(f"[MCTs] Safe pieces: {safe_pieces}")
             while time.time() < end_time:
                 node = self._select(root)
                 if not node.is_terminal() and node.untried_actions:
@@ -171,7 +390,7 @@ class P2:
             return best_piece
         
         # 안전한 말이 없는 경우 (모든 말이 상대방의 승리를 유발) -> 혹시 모르니까 MCTS 진행
-        print("[DEBUG] No safe pieces available, performing MCTS with all pieces.")
+        print("[MCTs] No safe pieces available, performing MCTS with all pieces.")
         while time.time() < end_time:
             node = self._select(root)
             if not node.is_terminal() and node.untried_actions:
@@ -204,12 +423,10 @@ class P2:
         """
         상대방이 선택한 말을 보드에 최적의 위치에 배치.
         """
-        start_time = time.time()
-        simulation_time = self.adjust_simulation_time()
-        end_time = start_time + simulation_time
-
-        self.state.selected_piece = selected_piece
+        start = time.time()
+        available_locs = [(row, col) for row, col in product(range(4), range(4)) if self.board[row][col]==0]
         root = MCTSNode(self.state.clone())
+        self.state.selected_piece = selected_piece
 
         # 즉각적인 승리를 먼저 확인
         for position in self.state.get_available_positions():
@@ -218,7 +435,54 @@ class P2:
             temp_state.board[r][c] = self.pieces.index(selected_piece) + 1
             if temp_state.check_win():
                 print(f"[DEBUG] Immediate win at position: {position}")
-                return position
+                return position 
+            
+
+        if len(self.state.available_pieces) <= 11:
+            safe_locations = []
+            safe_locations = self._filter_losing_positions(selected_piece) 
+            
+        
+            # 1. 안전한 위치가 여러 개 있을 경우, minimax를 통해 최적의 위치를 선택
+            if safe_locations:
+                depth = get_depth(self.state.available_pieces)
+                best_score = -1e9
+                best_location = None
+                for row, col in safe_locations:
+                    new_board = np.copy(self.board)
+                    new_board[row][col] = self.pieces.index(selected_piece) + 1
+                    available_pieces_tuple = tuple(self.state.available_pieces)
+                    board_tuple = tuple(map(tuple, new_board))
+                    score = minimax_select(True, depth, available_pieces_tuple, board_tuple)
+                    if score > best_score:
+                        best_score = score
+                        best_location = (row, col)
+                print(f"=== 안전한 위치 중 최적 선택: {best_location} ===")
+                return best_location
+
+            # 2. 안전한 위치가 없으면 기존 minimax 로직 사용
+            print("=== 모든 위치에서 상대방 승리를 막을 수 없음. 기존 전략 수행 ===")
+            depth = get_depth(self.state.available_pieces)
+            best_score = -1e9
+            best_location = None
+            for row, col in available_locs:
+                new_board = np.copy(self.board)
+                new_board[row][col] = self.pieces.index(selected_piece) + 1
+                available_pieces_tuple = tuple(self.state.available_pieces)
+                board_tuple = tuple(map(tuple, new_board))
+                score = minimax_select(True, depth, available_pieces_tuple, board_tuple)
+                if score > best_score:
+                    best_score = score
+                    best_location = (row, col)       
+
+            print(f"=== 미니맥스 {best_location[0]}, {best_location[1]} 배치, {int(time.time() - start)} 초 경과 ===")
+            return best_location
+
+
+        start_time = time.time()
+        simulation_time = self.adjust_simulation_time()
+        end_time = start_time + simulation_time
+        root = MCTSNode(self.state.clone())
 
         # MCTS 수행
         while time.time() < end_time:
@@ -232,8 +496,46 @@ class P2:
         best_child = max(root.children, key=lambda c: c.visits)
         best_position = best_child.action[1]
 
-        print(f"[DEBUG] Best position determined by MCTS: {best_position}")
+        print(f"[MCTs] Best position determined by MCTS: {best_position}")
         return best_position
+    
+
+    def _filter_losing_positions(self, selected_piece):
+        """
+        특정 위치에 말을 두었을 때, 이후 남은 모든 말 중에서 안전한 말을 줄 수 있는 위치만 필터링.
+        """
+        available_locs = self.state.get_available_positions()
+        truly_safe_locations = []
+
+        # 선택된 말을 남은 말에서 제외
+        remaining_pieces = [piece for piece in self.state.available_pieces if piece != selected_piece]
+
+        for row, col in available_locs:
+            # 주어진 말을 현재 위치에 배치
+            new_board = np.copy(self.board)
+            new_board[row][col] = self.pieces.index(selected_piece) + 1
+
+            # 남은 모든 말에 대해 안전한 말이 있는지 확인
+            has_safe_piece = False
+            for piece in remaining_pieces:
+                # 임시 상태 생성 후 검증
+                temp_state = self.state.clone()
+                temp_state.board = new_board
+                temp_state.available_pieces.remove(piece)
+
+                # 상대방이 즉시 승리하지 못하는 말이 있는 경우
+                if not self._can_opponent_win_next_turn(temp_state, piece):
+                    has_safe_piece = True
+                    break
+
+            # 안전한 말이 있는 위치만 추가
+            if has_safe_piece:
+                truly_safe_locations.append((row, col))
+            else:
+                print(f"[DEBUG] Location ({row}, {col}) is unsafe: no safe pieces remaining.")
+
+        print(f"[DEBUG] Final safe locations: {truly_safe_locations}")
+        return truly_safe_locations
     
     
     def _select(self, node):
@@ -250,13 +552,17 @@ class P2:
         if action[0]:  # piece selection
             new_state.available_pieces.remove(action[0])
             new_state.selected_piece = action[0]
+            next_turn_owner = "P2"
         else:  # piece placement
             r, c = action[1]
             new_state.board[r][c] = self.pieces.index(new_state.selected_piece) + 1
             new_state.selected_piece = None
+            next_turn_owner = "P1"
             
-        child = MCTSNode(new_state, node, action)
-        node.children.append(child)
+
+        # 자식 노드 생성 시 turn_owner를 반영하여 넘겨줌
+        child = MCTSNode(new_state, parent=node, action=action, turn_owner=next_turn_owner)
+        node.children.append(child)  # 부모 노드의 자식 목록에 추가
         return child
     
     def _simulate(self, node):
@@ -377,11 +683,15 @@ class P2:
         depth = 0  # 현재 노드의 깊이를 추적
         while node:
             node.visits += 1
-            # 깊이에 따른 가중치 감소
-            weight = 1 / (1 + depth)
-            node.wins += result * weight
+            weight = 1 / (1 + depth) # 깊이에 따른 가중치 감소
+                # 현재 턴의 주인 (turn_owner)을 확인하여 승패를 반영
+            if node.turn_owner == "P1":
+                # P1이 승리하면 result 그대로 반영
+                node.wins += result * weight
+            else:  # "P2"
+                # P2가 승리하면 승패 반전
+                node.wins += (1 - result) * weight  # P2의 승리이므로 result 반전
             node = node.parent
-            result = 1 - result  # 승패 반전
             depth += 1
 
     

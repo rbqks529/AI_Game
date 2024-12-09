@@ -72,11 +72,11 @@ def get_depth(available_pieces):
     elif len(available_pieces) >= 9:
         return 6
     elif len(available_pieces) >= 8:
-        return 7
-    elif len(available_pieces) >= 6:
         return 8
-    else:
+    elif len(available_pieces) >= 6:
         return 9
+    else:
+        return 10
         
 @lru_cache(maxsize=8192)
 def evaluate_place(board_tuple, selected_piece):
@@ -259,9 +259,10 @@ class MCTSNode:
     def is_terminal(self):
         return self.state.check_win() or not self.state.get_available_positions()
 
-class P2:
+class P1:
     def __init__(self, board, available_pieces):
         self.state = QuartoState(board, available_pieces)
+        self.board = board
         self.pieces = [(i, j, k, l) for i in range(2) for j in range(2) 
                         for k in range(2) for l in range(2)]
 
@@ -272,7 +273,7 @@ class P2:
         # 진행 상황에 따라 가중치를 조정
         if remaining_piece > 12:  # 초반
             #time_weight = 0.5
-            return 10
+            return 12
         elif remaining_piece > 10:  # 중반
             #time_weight = 1.0
             return 40
@@ -283,7 +284,7 @@ class P2:
             #time_weight = 1.0
             return 35
         else:  # 후반
-            return 40
+            return 30
             #time_weight = 2.0
         
         # 남은 턴 수에 따라 동적 분배
@@ -313,26 +314,46 @@ class P2:
             self.state.selected_piece = best_piece
             return best_piece
         
+
         if len(self.state.available_pieces) <= 10:
+            select = None
             depth = get_depth(self.state.available_pieces)
             best_score = -1e9
+
+            if safe_pieces:
+                print(f"[미니맥스] Safe pieces: {safe_pieces}")
+                for piece in safe_pieces:
+                    new_available_pieces = list(safe_pieces)
+                    new_available_pieces.remove(piece)
+                    new_available_pieces_tuple = tuple(new_available_pieces)
+                    board_tuple = tuple(map(tuple, self.state.board))
+                    score = minimax_place(False, depth, new_available_pieces_tuple, board_tuple, piece)
+                    if score > best_score:
+                        best_score = score
+                        select = piece
             
-            for piece in self.state.available_pieces:
-                new_available_pieces = list(self.state.available_pieces)
-                new_available_pieces.remove(piece)
-                new_available_pieces_tuple = tuple(new_available_pieces)
-                board_tuple = tuple(map(tuple, self.state.board))
-                score = minimax_place(False, depth, new_available_pieces_tuple, board_tuple, piece)
-                if score > best_score:
-                    best_score = score
-                    select = piece
-                    
+            else:
+                print(f"[미니맥스] Safe pieces 없음 -> 질걸?")
+                for piece in self.state.available_pieces:
+                    new_available_pieces = list(self.state.available_pieces)
+                    new_available_pieces.remove(piece)
+                    new_available_pieces_tuple = tuple(new_available_pieces)
+                    board_tuple = tuple(map(tuple, self.state.board))
+                    score = minimax_place(False, depth, new_available_pieces_tuple, board_tuple, piece)
+                    if score > best_score:
+                        best_score = score
+                        select = piece
+
+            # 선택된 말이 없으면 기본값 설정 (예: 첫 번째 말 선택)
+            if select is None:
+                select = safe_pieces[0] if safe_pieces else self.state.available_pieces[0]             
+
             print(f"=== 미니맥스 1 {piece_to_mbti(select)} 선택, {int(time.time() - start_time)} 초 경과 ===")
             return select
 
         # MCTS 탐색 시작
         if safe_pieces:  # 안전한 말이 있는 경우
-            print(f"[DEBUG] Safe pieces: {safe_pieces}")
+            print(f"[MCTs] Safe pieces: {safe_pieces}")
             while time.time() < end_time:
                 node = self._select(root)
                 if not node.is_terminal() and node.untried_actions:
@@ -369,7 +390,7 @@ class P2:
             return best_piece
         
         # 안전한 말이 없는 경우 (모든 말이 상대방의 승리를 유발) -> 혹시 모르니까 MCTS 진행
-        print("[DEBUG] No safe pieces available, performing MCTS with all pieces.")
+        print("[MCTs] No safe pieces available, performing MCTS with all pieces.")
         while time.time() < end_time:
             node = self._select(root)
             if not node.is_terminal() and node.untried_actions:
@@ -402,12 +423,10 @@ class P2:
         """
         상대방이 선택한 말을 보드에 최적의 위치에 배치.
         """
-        start_time = time.time()
-        simulation_time = self.adjust_simulation_time()
-        end_time = start_time + simulation_time
+        start = time.time()
+        available_locs = [(row, col) for row, col in product(range(4), range(4)) if self.board[row][col]==0]
 
         self.state.selected_piece = selected_piece
-        root = MCTSNode(self.state.clone())
 
         # 즉각적인 승리를 먼저 확인
         for position in self.state.get_available_positions():
@@ -416,24 +435,55 @@ class P2:
             temp_state.board[r][c] = self.pieces.index(selected_piece) + 1
             if temp_state.check_win():
                 print(f"[DEBUG] Immediate win at position: {position}")
-                return position
+                return position 
             
-        if len(self.state.available_pieces) <= 10:    
+
+        if len(self.state.available_pieces) <= 12:
+            safe_locations = []   
+            select = None
+            safe_locations = self._filter_losing_positions(selected_piece) 
+            
+        
+            # 1. 안전한 위치가 여러 개 있을 경우, minimax를 통해 최적의 위치를 선택
+            if safe_locations:
+                depth = get_depth(self.state.available_pieces)
+                best_score = -1e9
+                best_location = None
+                for row, col in safe_locations:
+                    new_board = np.copy(self.board)
+                    new_board[row][col] = self.pieces.index(selected_piece) + 1
+                    available_pieces_tuple = tuple(self.state.available_pieces)
+                    board_tuple = tuple(map(tuple, new_board))
+                    score = minimax_select(True, depth, available_pieces_tuple, board_tuple)
+                    if score > best_score:
+                        best_score = score
+                        best_location = (row, col)
+                print(f"=== 안전한 위치 중 최적 선택: {best_location} ===")
+                return best_location
+
+            # 2. 안전한 위치가 없으면 기존 minimax 로직 사용
+            print("=== 모든 위치에서 상대방 승리를 막을 수 없음. 기존 전략 수행 ===")
             depth = get_depth(self.state.available_pieces)
             best_score = -1e9
-            
-            for row, col in self.state.get_available_positions():
-                new_board = np.copy(self.state.board)
+            best_location = None
+            for row, col in available_locs:
+                new_board = np.copy(self.board)
                 new_board[row][col] = self.pieces.index(selected_piece) + 1
                 available_pieces_tuple = tuple(self.state.available_pieces)
                 board_tuple = tuple(map(tuple, new_board))
                 score = minimax_select(True, depth, available_pieces_tuple, board_tuple)
                 if score > best_score:
                     best_score = score
-                    place = (row, col)
-                    
-            print(f"=== 미니맥스 1 {place[0]}, {place[1]} 배치, {int(time.time() - start_time)} 초 경과 ===")
-            return place
+                    best_location = (row, col)       
+
+            print(f"=== 미니맥스 {best_location[0]}, {best_location[1]} 배치, {int(time.time() - start)} 초 경과 ===")
+            return best_location
+
+
+        start_time = time.time()
+        simulation_time = self.adjust_simulation_time()
+        end_time = start_time + simulation_time
+        root = MCTSNode(self.state.clone())
 
         # MCTS 수행
         while time.time() < end_time:
@@ -447,8 +497,49 @@ class P2:
         best_child = max(root.children, key=lambda c: c.visits)
         best_position = best_child.action[1]
 
-        print(f"[DEBUG] Best position determined by MCTS: {best_position}")
+        print(f"[MCTs] Best position determined by MCTS: {best_position}")
         return best_position
+    
+
+    def _filter_losing_positions(self, selected_piece):
+        """
+        모든 위치에 말을 놓아보고, 내가 어떤 말을 줘도 상대방이 승리 가능한 경우를 필터링하여 제거.
+        """
+        available_locs = [(row, col) for row, col in product(range(4), range(4)) if self.board[row][col] == 0]
+        truly_safe_locations = []  # 내가 어떤 말을 줘도 안전한 위치를 저장
+
+        for row, col in available_locs:
+            # 주어진 말을 현재 위치에 배치
+            new_board = np.copy(self.board)
+            new_board[row][col] = self.pieces.index(selected_piece) + 1
+
+            # 상대방에게 줄 수 있는 모든 말을 시뮬레이션
+            is_losing_position = True  # 기본값: 이 위치는 내가 지는 위치로 가정
+            for opponent_piece in self.state.available_pieces:
+                opponent_can_win = False
+
+                # 상대방이 줄 말을 받았을 때 가능한 모든 위치 확인
+                for opp_row, opp_col in [(r, c) for r, c in product(range(4), range(4)) if new_board[r][c] == 0]:
+                    simulated_board = np.copy(new_board)
+                    simulated_board[opp_row][opp_col] = self.pieces.index(opponent_piece) + 1
+
+                    # 상대방이 승리 가능한 경우
+                    if check_win(simulated_board):
+                        opponent_can_win = True
+                        break
+
+                # 상대방이 승리 불가능한 경우가 하나라도 있다면 이 위치는 안전
+                if not opponent_can_win:
+                    is_losing_position = False
+                    break
+
+            # 이 위치가 안전하다면 추가
+            if not is_losing_position:
+                truly_safe_locations.append((row, col))
+
+        # 안전한 위치 반환
+        print(f"[DEBUG] Safe locations after losing positions filtered: {truly_safe_locations}")
+        return truly_safe_locations
     
     
     def _select(self, node):

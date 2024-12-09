@@ -2,12 +2,12 @@ import sys
 import pygame
 import numpy as np
 
-from machines_p1 import P1
 from machines_p2 import P2
+from machines_p1 import P1
 import time
 
 players = {
-    1: P1,
+    1: P1, 
     2: P2
 }
 
@@ -251,4 +251,4 @@ while True:
                 display_message("Draw!", GRAY)
                 display_time(total_time_consumption)
 
-        pygame.display.update()
+        pygame.display.update() 

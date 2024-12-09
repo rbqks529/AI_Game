@@ -1,6 +1,7 @@
 import numpy as np
 from itertools import product
 import time
+import copy
 from copy import deepcopy
 from functools import lru_cache
 
@@ -152,6 +153,7 @@ def minimax_select(is_maximizing, depth, available_pieces_tuple, board_tuple):
 @lru_cache(maxsize=65536)
 def minimax_place(is_maximizing, depth, available_pieces_tuple, board_tuple, selected_piece):
         board = np.array(board_tuple)
+        available_pieces = list(available_pieces_tuple)
         
         if is_maximizing:
             if depth == 0:
@@ -267,18 +269,27 @@ class P1:
     def adjust_simulation_time(self):
         remaining_piece = len(self.state.available_pieces)
 
+        print(f"[DEBUG] remaining_piece: {remaining_piece}")
         # 진행 상황에 따라 가중치를 조정
+            #time_weight = 2.0
         if remaining_piece > 14:  # 초반
+            #time_weight = 0.5
             return 15
         elif remaining_piece > 12:  # 중반
+            #time_weight = 1.0
             return 35
         elif remaining_piece > 8:  # 중반
+            #time_weight = 1.0
             return 50
         elif remaining_piece > 6:  # 중반
+            #time_weight = 1.0
             return 35
         else:  # 후반
             return 30
         
+        # 남은 턴 수에 따라 동적 분배
+        #dynamic_time = max((remaining_time / remaining_piece) * time_weight, 1.0)
+        #return min(dynamic_time, 10.0)  # 최대 10초 제   
     
     def select_piece(self):
         """상대방에게 최악의 말을 선택하며 즉각적인 패배를 방지"""
@@ -286,6 +297,8 @@ class P1:
         simulation_time = self.adjust_simulation_time()
         root = MCTSNode(self.state.clone())
         end_time = start_time + simulation_time
+
+        print(f"[DEBUG] simulation_time: {simulation_time}")
 
         # 즉각적인 패배를 방지: 상대방이 바로 승리하지 않는 말을 우선적으로 선택
         safe_pieces = []
@@ -296,6 +309,7 @@ class P1:
         # 안전한 말이 하나인 경우 바로 반환
         if len(safe_pieces) == 1:
             best_piece = safe_pieces[0]
+            print(f"[DEBUG] Only one safe piece available: {best_piece}")
             self.state.available_pieces.remove(best_piece)
             self.state.selected_piece = best_piece
             return best_piece
@@ -307,6 +321,7 @@ class P1:
             best_score = -1e9
 
             if safe_pieces:
+                print(f"[미니맥스] Safe pieces: {safe_pieces}")
                 for piece in safe_pieces:
                     new_available_pieces = list(safe_pieces)
                     new_available_pieces.remove(piece)
@@ -318,6 +333,7 @@ class P1:
                         select = piece
             
             else:
+                print(f"[미니맥스] Safe pieces 없음 -> 질걸?")
                 for piece in self.state.available_pieces:
                     new_available_pieces = list(self.state.available_pieces)
                     new_available_pieces.remove(piece)
@@ -328,20 +344,24 @@ class P1:
                         best_score = score
                         select = piece
 
-            # 선택된 말이 없으면 기본값 설정 오류 방지(예: 첫 번째 말 선택)
+            # 선택된 말이 없으면 기본값 설정 (예: 첫 번째 말 선택)
             if select is None:
                 select = safe_pieces[0] if safe_pieces else self.state.available_pieces[0]             
 
+            print(f"=== 미니맥스 1 {piece_to_mbti(select)} 선택, {int(time.time() - start_time)} 초 경과 ===")
             return select
 
         # MCTS 탐색 시작
         if safe_pieces:  # 안전한 말이 있는 경우
+            print(f"[MCTs] Safe pieces: {safe_pieces}")
             while time.time() < end_time:
                 node = self._select(root)
                 if not node.is_terminal() and node.untried_actions:
                     node = self._expand(node)
                 simulation_result = self._simulate(node)
                 self._backpropagate(node, simulation_result)
+
+            #self.used_time += time.time() - start_time
 
             # 각 말을 평가하여 상대방에게 가장 불리한 말 선택
             best_piece = None
@@ -370,12 +390,15 @@ class P1:
             return best_piece
         
         # 안전한 말이 없는 경우 (모든 말이 상대방의 승리를 유발) -> 혹시 모르니까 MCTS 진행
+        print("[MCTs] No safe pieces available, performing MCTS with all pieces.")
         while time.time() < end_time:
             node = self._select(root)
             if not node.is_terminal() and node.untried_actions:
                 node = self._expand(node)
             simulation_result = self._simulate(node)
             self._backpropagate(node, simulation_result)
+
+        #self.used_time += time.time() - start_time
 
         # 모든 말을 대상으로 MCTS 결과를 바탕으로 선택
         best_piece = None
@@ -400,6 +423,7 @@ class P1:
         """
         상대방이 선택한 말을 보드에 최적의 위치에 배치.
         """
+        start = time.time()
         available_locs = [(row, col) for row, col in product(range(4), range(4)) if self.board[row][col]==0]
         root = MCTSNode(self.state.clone())
         self.state.selected_piece = selected_piece
@@ -410,6 +434,7 @@ class P1:
             r, c = position
             temp_state.board[r][c] = self.pieces.index(selected_piece) + 1
             if temp_state.check_win():
+                print(f"[DEBUG] Immediate win at position: {position}")
                 return position 
             
 
@@ -417,6 +442,7 @@ class P1:
             safe_locations = []
             safe_locations = self._filter_losing_positions(selected_piece) 
             
+        
             # 1. 안전한 위치가 여러 개 있을 경우, minimax를 통해 최적의 위치를 선택
             if safe_locations:
                 depth = get_depth(self.state.available_pieces)
@@ -431,9 +457,11 @@ class P1:
                     if score > best_score:
                         best_score = score
                         best_location = (row, col)
+                print(f"=== 안전한 위치 중 최적 선택: {best_location} ===")
                 return best_location
 
             # 2. 안전한 위치가 없으면 기존 minimax 로직 사용
+            print("=== 모든 위치에서 상대방 승리를 막을 수 없음. 기존 전략 수행 ===")
             depth = get_depth(self.state.available_pieces)
             best_score = -1e9
             best_location = None
@@ -447,6 +475,7 @@ class P1:
                     best_score = score
                     best_location = (row, col)       
 
+            print(f"=== 미니맥스 {best_location[0]}, {best_location[1]} 배치, {int(time.time() - start)} 초 경과 ===")
             return best_location
 
 
@@ -467,6 +496,7 @@ class P1:
         best_child = max(root.children, key=lambda c: c.visits)
         best_position = best_child.action[1]
 
+        print(f"[MCTs] Best position determined by MCTS: {best_position}")
         return best_position
     
 
@@ -501,7 +531,10 @@ class P1:
             # 안전한 말이 있는 위치만 추가
             if has_safe_piece:
                 truly_safe_locations.append((row, col))
+            else:
+                print(f"[DEBUG] Location ({row}, {col}) is unsafe: no safe pieces remaining.")
 
+        print(f"[DEBUG] Final safe locations: {truly_safe_locations}")
         return truly_safe_locations
     
     

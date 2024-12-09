@@ -1,6 +1,7 @@
 import numpy as np
 from itertools import product
 import time
+import copy
 from copy import deepcopy
 from functools import lru_cache
 
@@ -192,7 +193,6 @@ class QuartoState:
     def clone(self):
         return QuartoState(self.board, self.available_pieces, self.selected_piece)
 
-    
     def get_available_positions(self):
         return [(r, c) for r, c in product(range(4), range(4)) 
                 if self.board[r][c] == 0]
@@ -231,7 +231,7 @@ class QuartoState:
         return False
 
 class MCTSNode:
-    def __init__(self, state, parent=None, action=None, turn_owner='P1'):
+    def __init__(self, state, parent=None, action=None, turn_owner='P2'):
         self.state = state
         self.parent = parent
         self.action = action
@@ -257,7 +257,7 @@ class MCTSNode:
     def is_terminal(self):
         return self.state.check_win() or not self.state.get_available_positions()
 
-class P1:
+class P2:
     def __init__(self, board, available_pieces):
         self.state = QuartoState(board, available_pieces)
         self.board = board
@@ -267,18 +267,25 @@ class P1:
     def adjust_simulation_time(self):
         remaining_piece = len(self.state.available_pieces)
 
-        # 진행 상황에 따라 가중치를 조정
         if remaining_piece > 14:  # 초반
+            #time_weight = 0.5
             return 15
         elif remaining_piece > 12:  # 중반
-            return 35
+            #time_weight = 1.0
+            return 30
         elif remaining_piece > 8:  # 중반
+            #time_weight = 1.0
             return 50
         elif remaining_piece > 6:  # 중반
+            #time_weight = 1.0
             return 35
         else:  # 후반
             return 30
+            #time_weight = 2.0
         
+        # 남은 턴 수에 따라 동적 분배
+        #dynamic_time = max((remaining_time / remaining_piece) * time_weight, 1.0)
+        #return min(dynamic_time, 10.0)  # 최대 10초 제   
     
     def select_piece(self):
         """상대방에게 최악의 말을 선택하며 즉각적인 패배를 방지"""
@@ -414,7 +421,7 @@ class P1:
             
 
         if len(self.state.available_pieces) <= 11:
-            safe_locations = []
+            safe_locations = []   
             safe_locations = self._filter_losing_positions(selected_piece) 
             
             # 1. 안전한 위치가 여러 개 있을 경우, minimax를 통해 최적의 위치를 선택
@@ -519,12 +526,12 @@ class P1:
         if action[0]:  # piece selection
             new_state.available_pieces.remove(action[0])
             new_state.selected_piece = action[0]
-            next_turn_owner = "P2"
+            next_turn_owner = "P1"
         else:  # piece placement
             r, c = action[1]
             new_state.board[r][c] = self.pieces.index(new_state.selected_piece) + 1
             new_state.selected_piece = None
-            next_turn_owner = "P1"
+            next_turn_owner = "P2"
             
 
         # 자식 노드 생성 시 turn_owner를 반영하여 넘겨줌
@@ -652,12 +659,12 @@ class P1:
             node.visits += 1
             weight = 1 / (1 + depth) # 깊이에 따른 가중치 감소
                 # 현재 턴의 주인 (turn_owner)을 확인하여 승패를 반영
-            if node.turn_owner == "P1":
-                # P1이 승리하면 result 그대로 반영
+            if node.turn_owner == "P2":
+                # P2이 승리하면 result 그대로 반영
                 node.wins += result * weight
-            else:  # "P2"
-                # P2가 승리하면 승패 반전
-                node.wins += (1 - result) * weight  # P2의 승리이므로 result 반전
+            else:  # "P1"
+                # P1가 승리하면 승패 반전
+                node.wins += (1 - result) * weight  # P1의 승리이므로 result 반전
             node = node.parent
             depth += 1
 
